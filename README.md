@@ -1,7 +1,7 @@
 #IP OVER ICMP Tunnel
 -
 
-- پس از نوشتن اسکریپت و تست کامل در گیم، قرار داده خواهد شد
+- در گیم تست شد و خوب بود. اسکریپت برای راحتی نصب نوشته میشود
 
 A lightweight ICMP-based tunnel over a TUN interface, written in C++17 and optional ChaCha20-Poly1305 encryption. This tool encapsulates IP traffic in ICMP echo packets, allowing you to bypass certain network restrictions.
 
@@ -34,7 +34,7 @@ sudo apt install -y g++ build-essential libsodium-dev iproute2
 Clone the repository and compile:
 
 ```bash
-git clone بعدا اضافه میشود
+git clone https://github.com/Azumi67/icmp_tun.git
 cd icmp-tun
 #Single - file compile
 g++ -O2 -std=c++17 icmp_tun.cpp -o icmp_tun -lsodium -pthread
