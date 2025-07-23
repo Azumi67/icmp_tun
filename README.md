@@ -171,9 +171,31 @@ sudo ./icmp_tun --drop-root icmptun ...
 ```
 
 ## Multi thread + Batch + MTU + Colorized logs
-```bash
+```
 sudo ./icmp_tun -c -b 1000 -n 32 --pskkey psk.key icmptun 192.0.2.1 198.51.100.1 10.0.0.1 10.0.0.2 -m 3 --drop-root
 ```
+## Firewall & ICMP Settings
+
+By default, the kernel accepts and replies to ICMP ECHO packets. Unless you have custom firewall or sysctl settings, no additional configuration is needed. However, if you’ve hardened your system or are running a restrictive firewall, ensure the following:
+
+* **Allow ICMP echo requests and replies**:
+
+```
+#IPv4
+  sudo iptables -A INPUT -p icmp --icmp-type echo-request -j ACCEPT
+  sudo iptables -A OUTPUT -p icmp --icmp-type echo-reply -j ACCEPT
+
+```
+
+* **Verify sysctl ICMP settings**:
+
+```
+#Ensure echo requests are not ignored
+  sysctl -w net.ipv4.icmp_echo_ignore_all=0
+  sysctl -w net.ipv4.icmp_echo_ignore_broadcasts=1 
+  ```
+
+If neither firewall rules nor sysctl blocks ICMP, you can run without special ICMP configuration.
 
 ## Troubleshooting
 
