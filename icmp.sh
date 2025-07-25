@@ -3,7 +3,7 @@ apt install wget -y
 echo -e "${GREEN}Downloading logo ...${RESET}"
 wget -O /etc/logo2.sh https://github.com/Azumi67/UDP2RAW_FEC/raw/main/logo2.sh
 chmod +x /etc/logo2.sh
-if [ -f "udp_tun.py" ]; then
+if [ -f "icmp.py" ]; then
     echo -e "${YELLOW}Removing existing icmp ...${RESET}"
     rm icmp.py
 fi
