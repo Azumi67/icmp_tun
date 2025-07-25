@@ -1,9 +1,49 @@
 #IP OVER ICMP Tunnel
 -
 
-- در گیم تست شد و خوب بود. اسکریپت برای راحتی نصب نوشته میشود
+![6348248](https://github.com/Azumi67/PrivateIP-Tunnel/assets/119934376/398f8b07-65be-472e-9821-631f7b70f783)
+**آموزش نصب با اسکریپت**
+ <div align="right">
+  <details>
+    <summary><strong><img src="https://github.com/Azumi67/Rathole_reverseTunnel/assets/119934376/fcbbdc62-2de5-48aa-bbdd-e323e96a62b5" alt="Image"> </strong>نصب icmp_tun</summary>
 
-A lightweight ICMP-based tunnel over a TUN interface, written in C++17 and optional ChaCha20-Poly1305 encryption. This tool encapsulates IP traffic in ICMP echo packets, allowing you to bypass certain network restrictions.
+------------------------------------ 
+<p align="right">
+
+  - این تانل اگر بر روی سرور شما اجازه icmp داده شود و محدود نشده باشد، باید کار کند و فقط برای شرایطی هست که دسترسی محدود میباشد
+- گزینه ها را به ترتیب نصب کنید
+- - اگر نیاز به encryption دارید یک psk با اسکریپت بسازید و همین کلید را در سرور بعدی هم کپی کنید. به طور مثال اگر برنامه در /usr/local/bin/icmp_tun است در سرور مقابل هم همین مسیر باید داده شود. برای فرستادن فایل از طریق scp باید ان مسیر در سرور مقایل موجود باشد. پس برای همین اول این اسکریپت را در هر دو طرف اجرا کنید و install & build کنید تا پوشه مورد نظر در هر دو طرف سرور ساخته شود و سپس فایل psk و انتقال ان را انجام دهید
+- اگر نیازی به encryption ندارید از این مورد عبور کنید
+- سپس تانل را کانفیگ میکنیم. مسیر مورد نظری که فایل را دانلود کردیم به صورت پیش فرص در مسیر usr/local/bin/icmp_tun است. گزینه enter میزنید تا سوال بعدی پرسیده شود
+- نام دیوایس را میدهیم و سپس ایپی پابلیک هر دو سرور به ترتیب لوکال و ریموت
+- سپس ایپی پرایوت 4 خود را برای سرور لوکال و ریموت مشخص میکنیم
+- اگر مایل به encryption بودید کلید psk را میسازید و در هر دو سرور کپی میکنید و سپس y میزنید
+- مقدار mtu را 1000 میدهم و batch size را 16 یا 32 وارد میکنم
+- ایدی تانل هر دو طرف باید یکسان باشد. مقدار thread بین 1 تا 3( من 3 قرار دادم)
+- اگر میخواهید root پس از نصب به nobody نغییر یابد، این گزینه را فعال کنید
+- رنگ لاگ را هم فعال میکنم و verbose را غیرفعال میکنم
+- همین کار را در سرور روبرو انجام میدهم.
+
+**- نصب پیش نیاز ها**
+```
+apt install python3 -y && sudo apt install python3-pip &&  pip install colorama && pip install netifaces && apt install curl -y
+pip3 install colorama
+sudo apt-get install python-pip -y  &&  apt-get install python3 -y && alias python=python3 && python -m pip install colorama && python -m pip install netifaces
+sudo apt update -y && sudo apt install -y python3 python3-pip curl && pip3 install --upgrade pip && pip3 install netifaces colorama requests
+
+```
+- اجرای اسکریپت
+```
+apt install curl -y && bash -c "$(curl -fsSL https://raw.githubusercontent.com/Azumi67/icmp_tun/refs/heads/main/icmp.sh)"
+```
+------------------
+
+  </details>
+</div>  
+
+---------------
+
+A lightweight ICMP-based tunnel over a TUN interface, written in C++17 and optional ChaCha20-Poly1305 encryption. This tool encapsulates IP traffic in ICMP echo packets, allowing you to bypass certain network restrictions(IF ICMP in your server is not restricted ofc)
 
 ## Features
 
