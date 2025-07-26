@@ -9,5 +9,5 @@ if [ -f "icmp.py" ]; then
 fi
 echo -e "${YELLOW}Downloading icmp.py...${RESET}"
 wget https://github.com/Azumi67/icmp_tun/releases/download/V1.0/icmp.py
-echo -e "${GREEN}Launching udp_tun.py...${RESET}"
+echo -e "${GREEN}Launching icmp.py...${RESET}"
 python3 icmp.py
