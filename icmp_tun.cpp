@@ -13,7 +13,7 @@
 //
 // Notes:
 // - "pack" packs multiple frames into a single ICMP payload to reduce overhead.
-
+#include <poll.h>
 #include <arpa/inet.h>
 #include <fcntl.h>
 #include <getopt.h>
@@ -122,12 +122,22 @@ static std::atomic<uint64_t> g_ctr{0};
 static std::atomic<uint16_t> g_seq{1};
 
 static const uint8_t DUMMY_BYTE = 0;
+static std::atomic<int> g_tun_fd{-1};
+static std::atomic<int> g_sock_fd{-1};
+
 
 static void on_signal(int sig)
 {
     log_msg(LOG_WARN, "Signal %d received, stopping...", sig);
     g_keep_running = 0;
+
+    int t = g_tun_fd.exchange(-1);
+    if (t >= 0) close(t);
+
+    int s = g_sock_fd.exchange(-1);
+    if (s >= 0) close(s);
 }
+
 
 static void run_cmd(const std::string &cmd)
 {
@@ -244,6 +254,7 @@ static int tun_create(const std::string &name, int mtu)
 
     run_cmd("ip link set dev " + name + " up");
     run_cmd("ip link set dev " + name + " mtu " + std::to_string(mtu));
+    fcntl(fd, F_SETFL, fcntl(fd, F_GETFL, 0) | O_NONBLOCK);
 
     log_msg(LOG_INFO, "Created TUN %s (MTU=%d)", name.c_str(), mtu);
     return fd;
@@ -252,16 +263,39 @@ static int tun_create(const std::string &name, int mtu)
 static void tun_thread(int tun_fd, const Config &cfg)
 {
     std::vector<uint8_t> buf((size_t)cfg.mtu + 128);
+
+    pollfd pfd{};
+    pfd.fd = tun_fd;
+    pfd.events = POLLIN;
+
     while (g_keep_running) {
-        ssize_t r = read(tun_fd, buf.data(), buf.size());
-        if (r > 0) {
-            Packet p;
-            p.data.assign(buf.begin(), buf.begin() + r);
-            q_push(std::move(p));
-        } else if (r < 0 && errno == EINTR) {
+        int pr = poll(&pfd, 1, 200); // 200ms tick to notice Ctrl+C quickly
+        if (!g_keep_running) break;
+
+        if (pr < 0) {
+            if (errno == EINTR) continue;
+            log_msg(LOG_WARN, "poll(tun) error: %s", strerror(errno));
+            std::this_thread::sleep_for(std::chrono::milliseconds(10));
             continue;
-        } else if (r < 0) {
-            log_msg(LOG_WARN, "TUN read error: %s", strerror(errno));
+        }
+        if (pr == 0) continue; // timeout
+
+        if (pfd.revents & (POLLERR | POLLHUP | POLLNVAL)) {
+            break;
+        }
+        if (!(pfd.revents & POLLIN)) continue;
+
+        for (;;) {
+            ssize_t r = read(tun_fd, buf.data(), buf.size());
+            if (r > 0) {
+                Packet p;
+                p.data.assign(buf.begin(), buf.begin() + r);
+                q_push(std::move(p));
+                continue;
+            }
+            if (r < 0 && (errno == EAGAIN || errno == EWOULDBLOCK)) break;
+            if (r < 0 && errno == EINTR) continue;
+            if (r <= 0) break;
         }
     }
 }
@@ -779,11 +813,16 @@ int main(int argc, char **argv)
     }
 
     int tun_fd = tun_create(cfg.tun, cfg.mtu);
+    g_tun_fd.store(tun_fd);
     run_cmd("ip addr add " + cfg.local_pr + "/30 dev " + cfg.tun);
 
     int sock = socket(AF_INET, SOCK_RAW, IPPROTO_ICMP);
     if (sock < 0) { perror("socket"); return 1; }
+
+    g_sock_fd.store(sock);
+
     fcntl(sock, F_SETFL, fcntl(sock, F_GETFL, 0) | O_NONBLOCK);
+
 
     sockaddr_in any{};
     any.sin_family = AF_INET;
