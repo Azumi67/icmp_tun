@@ -1,6 +1,10 @@
 #IP OVER ICMP Tunnel
 -
 
+- اپدیت جدید انجام شد که سرعت بهتری برای گیم در شرایط محدودیت بدهد. چندین کامند تغییر کرد
+- بعدا اسکریپت اپدیت میشود.فعلا اسکریپت جواب نمیدهد
+
+
 ![6348248](https://github.com/Azumi67/PrivateIP-Tunnel/assets/119934376/398f8b07-65be-472e-9821-631f7b70f783)
 **آموزش نصب با اسکریپت**
  <div align="right">
@@ -47,13 +51,16 @@ A lightweight ICMP-based tunnel over a TUN interface, written in C++17 and optio
 
 ## Features
 
-* **TUN interface**: Creates a virtual TUN device to forward IP packets.
-* **ICMP encapsulation**: Sends and receives data in ICMP ECHO/ECHOREPLY messages.
-* **Optional encryption**: ChaCha20-Poly1305 for authenticated encryption.
-* **Multi-threaded**: Worker threads for parallel handling of packets.
-* **Daemon mode**: Run in the background as a system daemon.
-* **Logging**: Configurable verbosity and optional colored output.
-* **Root drop**: Optionally drop privileges after setup for improved security.
+- **TUN interface:** Creates a Linux TUN device and forwards IP packets through it.
+- **ICMP encapsulation (ECHO/ECHOREPLY):** Tunnels traffic inside ICMP echo payloads.
+- **poll/reply model:** Client sends ICMP **ECHO** polls; server returns **ECHOREPLY** (server sends data only when polled).
+- **Burst replies:** Server can flush multiple queued frames per poll using `--burst` (better throughput, fewer stalls).
+- **Frame packing:** Pack multiple IP frames into a single ICMP payload using `--pack` (lower overhead, better performance on bursty traffic).
+- **Optional encryption:** ChaCha20-Poly1305 (libsodium) authenticated encryption via `--pskkey`.
+- **Daemon mode:** Run in the background using `--daemon` / `-d`.
+- **Logging:** Verbose mode (`--verbose` / `-v`) and optional colored output (`--color` / `-c`).
+- **Privilege drop:** Optionally drop privileges after setup using `--drop-root`.
+
 
 ## Prerequisites
 
@@ -105,6 +112,11 @@ chmod 600 psk.key
 ```bash
 sudo ./icmp_tun [OPTIONS] <tun> <local_public_ip> <remote_public_ip> <local_private_ip> <remote_private_ip>
 ```
+<tun>: Name of the TUN interface (e.g., tun0)
+<local_public_ip>: Public IP of this machine
+<remote_public_ip>: Public IP of the peer
+<local_private_ip>: IP to assign to the local TUN device (recommended /30 pair)
+<remote_private_ip>: IP of the remote TUN endpoint
 
 ## Generating a Random Tunnel ID
 
@@ -131,59 +143,115 @@ sudo ./icmp_tun --id $ID tun0 192.0.2.1 198.51.100.1 10.0.0.1 10.0.0.2
 
 ```
 Usage:
-  sudo ./icmp_tun [--daemon|-d] [--color|-c] [--mtu|-b MTU]
-                  [--verbose|-v] [--batch|-n BATCH] [--id|-i ID]
-                  [--pskkey <file>] [--drop-root]
-                  [--threads|-m THREADS]
-                  <tun> <local_pub_ip> <remote_pub_ip>
-                  <local_tun_ip> <remote_tun_ip>
+  sudo ./icmp_tun
+    [--mode client|server]
+    [--poll-ms MS] [--burst N] [--pack N]
+    [--mtu MTU|-b MTU] [--id ID|-i ID]
+    [--pskkey <file>] [--drop-root]
+    [--daemon|-d] [--color|-c] [--verbose|-v]
+    [--rt] [--cpu N]
+    <tun> <local_pub_ip> <remote_pub_ip> <local_tun_ip> <remote_tun_ip>
 ```
 
 ### Options
 
-* `--daemon`, `-d`
-  : Run as a background daemon.
-* `--color`, `-c`
-  : Enable colored log output.
-* `--mtu <MTU>`, `-b <MTU>`
-  : Set the TUN device MTU (default: 1000).
-* `--verbose`, `-v`
-  : Increase log verbosity (INFO level).
-* `--batch <BATCH>`, `-n <BATCH>`
-  : Number of packets to batch (default: 16).
-* `--id <ID>`, `-i <ID>`
-  : Tunnel identifier (ICMP echo ID, default: 0x1234).
-* `--pskkey <file>`
-  : Path to 32-byte PSK file to enable encryption.
-* `--drop-root`
-  : Drop root privileges after setup (to `nobody`).
-* `--threads <THREADS>`, `-m <THREADS>`
-  : Number of worker threads (default: 1).
+--mode client|server
 
-### Positional Arguments
+Select role:
 
-1. `<tun>`: Name of the TUN interface (e.g., `azumi`).
-2. `<local_pub_ip>`: Public IP of the Local
-3. `<remote_pub_ip>`: Public IP of the remote peer.
-4. `<local_tun_ip>`: IP address to assign to the local TUN device (in `/30`).
-5. `<remote_tun_ip>`: IP address for the remote TUN endpoint.
+client sends ICMP ECHO polls
+
+server replies with ICMP ECHOREPLY (server traffic is carried only inside replies)
+
+--poll-ms MS (client only)
+Client poll interval. Lower values = lower latency, but more ICMP traffic.
+Typical range: 5..15
+
+--burst N (server only)
+Number of replies per poll (flush more queued frames).
+Typical range: 2..8
+
+--pack N (both server & client)
+Pack up to N frames into one ICMP payload (reduces overhead and helps bursty traffic).
+Recommended: 2
+
+--mtu MTU, -b MTU
+Set TUN MTU (default: 1000).
+
+--id ID, -i ID
+Tunnel identifier (ICMP echo ID). Must match on both ends (default: 0x1234).
+
+--pskkey <file>
+Enable encryption with a 32-byte PSK file (same file on both ends).
+
+--drop-root
+Drop root privileges to nobody after setup.
+
+--daemon, -d
+Run in the background (daemon).
+
+--color, -c
+Enable colored output.
+
+--verbose, -v
+Increase log verbosity.
+
+--rt (Linux)
+Try realtime scheduling (advanced).
+
+--cpu N (Linux)
+Pin networking thread to CPU N (advanced).
+
 
 ## Example
 
-On **Machine A** (`192.0.2.1`) and **Machine B** (`198.51.100.1`), create a tunnel:
+On **Server** (`192.0.2.1`) and **Client** (`198.51.100.1`), create a tunnel:
 
 ```bash
-#Machine A
-sudo ./icmp_tun icmptun 192.0.2.1 198.51.100.1 10.0.0.1 10.0.0.2
+#Server
+sudo ./icmp_tun --mode server -c -v --id 0x1234 --burst 4 --pack 2 \
+  tun0 192.0.2.1 198.51.100.1 10.0.0.1 10.0.0.2
 
-#Machine B
-sudo ./icmp_tun icmptun 198.51.100.1 192.0.2.1 10.0.0.2 10.0.0.1
+#Client
+sudo ./icmp_tun --mode client -c -v --id 0x1234 --poll-ms 8 --pack 2 \
+  tun0 198.51.100.1 192.0.2.1 10.0.0.2 10.0.0.1
 ```
 
 With encryption (identical `psk.key` on both sides):
 
 ```bash
-sudo ./icmp_tun -c -v --pskkey psk.key icmptun 192.0.2.1 198.51.100.1 10.0.0.1 10.0.0.2
+# server
+sudo ./icmp_tun --mode server -c -v --id 0x1234 --burst 4 --pack 2 \
+  --pskkey psk.key \
+  tun0 192.0.2.1 198.51.100.1 10.0.0.1 10.0.0.2
+
+#client
+sudo ./icmp_tun --mode client -c -v --id 0x1234 --poll-ms 8 --pack 2 \
+  --pskkey psk.key \
+  tun0 198.51.100.1 192.0.2.1 10.0.0.2 10.0.0.1
+```
+
+## Gaming Recommended Profile (low-latency)
+
+Why this helps:
+
+--poll-ms 5 reduces the maximum “wait until next poll” delay → better ping/jitter.
+
+--burst 6 lets the server flush more queued frames per poll → fewer micro-stalls under bursty game traffic.
+
+--pack 2 reduces per-packet ICMP overhead and helps when packets come in bursts (common in games/voice).
+
+If CPU usage rises too much, increase --poll-ms to 8 or reduce --burst to 4.
+
+```bash
+#Server
+sudo ./icmp_tun --mode server -c -v --id 0x1234 --burst 6 --pack 2 \
+  tun0 <SERVER_PUBLIC_IP> <CLIENT_PUBLIC_IP> 10.0.0.1 10.0.0.2
+
+#Client
+sudo ./icmp_tun --mode client -c -v --id 0x1234 --poll-ms 5 --pack 2 \
+  tun0 <CLIENT_PUBLIC_IP> <SERVER_PUBLIC_IP> 10.0.0.2 10.0.0.1
+
 ```
 
 ## Daemonizing
@@ -191,7 +259,8 @@ sudo ./icmp_tun -c -v --pskkey psk.key icmptun 192.0.2.1 198.51.100.1 10.0.0.1 1
 To run in the background, add `-d`:
 
 ```bash
-sudo ./icmp_tun -d --color --pskkey psk.key tun0 A_pub B_pub A_tun B_tun
+sudo ./icmp_tun --mode server -d -c --id 0x1234 --burst 4 --pack 2 \
+  tun0 <SERVER_PUBLIC_IP> <CLIENT_PUBLIC_IP> 10.0.0.1 10.0.0.2
 ```
 
 Logs will go to stdout (redirect or configure your service manager as needed).
@@ -210,10 +279,6 @@ Use `--drop-root` to switch to `nobody` after setup:
 sudo ./icmp_tun --drop-root icmptun ...
 ```
 
-## Multi thread + Batch + MTU + Colorized logs
-```
-sudo ./icmp_tun -c -b 1000 -n 32 --pskkey psk.key icmptun 192.0.2.1 198.51.100.1 10.0.0.1 10.0.0.2 -m 3 --drop-root
-```
 ## Firewall & ICMP Settings
 
 By default, the kernel accepts and replies to ICMP ECHO packets. Unless you have custom firewall or sysctl settings, no additional configuration is needed. However, if you’ve hardened your system or are running a restrictive firewall, ensure the following:
