@@ -209,11 +209,11 @@ On **Server** (`192.0.2.1`) and **Client** (`198.51.100.1`), create a tunnel:
 
 ```bash
 #Server
-sudo ./icmp_tun --mode server -c -v --id 0x1234 --burst 4 --pack 2 \
+sudo ./icmp_tun --mode server -c -v --id 0x1234 --burst 4 --pack 1 \
   tun0 192.0.2.1 198.51.100.1 10.0.0.1 10.0.0.2
 
 #Client
-sudo ./icmp_tun --mode client -c -v --id 0x1234 --poll-ms 8 --pack 2 \
+sudo ./icmp_tun --mode client -c -v --id 0x1234 --poll-ms 8 --pack 1 \
   tun0 198.51.100.1 192.0.2.1 10.0.0.2 10.0.0.1
 ```
 
@@ -221,12 +221,12 @@ With encryption (identical `psk.key` on both sides):
 
 ```bash
 # server
-sudo ./icmp_tun --mode server -c -v --id 0x1234 --burst 4 --pack 2 \
+sudo ./icmp_tun --mode server -c -v --id 0x1234 --burst 4 --pack 1 \
   --pskkey psk.key \
   tun0 192.0.2.1 198.51.100.1 10.0.0.1 10.0.0.2
 
 #client
-sudo ./icmp_tun --mode client -c -v --id 0x1234 --poll-ms 8 --pack 2 \
+sudo ./icmp_tun --mode client -c -v --id 0x1234 --poll-ms 8 --pack 1 \
   --pskkey psk.key \
   tun0 198.51.100.1 192.0.2.1 10.0.0.2 10.0.0.1
 ```
@@ -239,17 +239,17 @@ Why this helps:
 
 --burst 6 lets the server flush more queued frames per poll → fewer micro-stalls under bursty game traffic.
 
---pack 2 reduces per-packet ICMP overhead and helps when packets come in bursts (common in games/voice).
+--pack 2 reduces per-packet ICMP overhead and helps when packets come in bursts (common in games/voice).[for now use pack 1 until i fix this]
 
 If CPU usage rises too much, increase --poll-ms to 8 or reduce --burst to 4.
 
 ```bash
 #Server
-sudo ./icmp_tun --mode server -c -v --id 0x1234 --burst 6 --pack 2 \
+sudo ./icmp_tun --mode server -c -v --id 0x1234 --burst 6 --pack 1 \
   tun0 <SERVER_PUBLIC_IP> <CLIENT_PUBLIC_IP> 10.0.0.1 10.0.0.2
 
 #Client
-sudo ./icmp_tun --mode client -c -v --id 0x1234 --poll-ms 5 --pack 2 \
+sudo ./icmp_tun --mode client -c -v --id 0x1234 --poll-ms 5 --pack 1 \
   tun0 <CLIENT_PUBLIC_IP> <SERVER_PUBLIC_IP> 10.0.0.2 10.0.0.1
 
 ```
@@ -259,7 +259,7 @@ sudo ./icmp_tun --mode client -c -v --id 0x1234 --poll-ms 5 --pack 2 \
 To run in the background, add `-d`:
 
 ```bash
-sudo ./icmp_tun --mode server -d -c --id 0x1234 --burst 4 --pack 2 \
+sudo ./icmp_tun --mode server -d -c --id 0x1234 --burst 4 --pack 1 \
   tun0 <SERVER_PUBLIC_IP> <CLIENT_PUBLIC_IP> 10.0.0.1 10.0.0.2
 ```
 
