@@ -173,7 +173,7 @@ Typical range: 2..8
 
 --pack N (both server & client)
 Pack up to N frames into one ICMP payload (reduces overhead and helps bursty traffic).
-Recommended: 2
+Recommended: 1
 
 --mtu MTU, -b MTU
 Set TUN MTU (default: 1000).
