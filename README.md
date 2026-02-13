@@ -2,7 +2,7 @@
 -
 
 - اپدیت جدید انجام شد که سرعت بهتری برای گیم در شرایط محدودیت بدهد. چندین کامند تغییر کرد
-- بعدا اسکریپت اپدیت میشود.فعلا اسکریپت جواب نمیدهد
+- اسکریپت با کامندهای جدید به روز شد
 
 
 ![6348248](https://github.com/Azumi67/PrivateIP-Tunnel/assets/119934376/398f8b07-65be-472e-9821-631f7b70f783)
@@ -22,11 +22,12 @@
 - نام دیوایس را میدهیم و سپس ایپی پابلیک هر دو سرور به ترتیب لوکال و ریموت
 - سپس ایپی پرایوت 4 خود را برای سرور لوکال و ریموت مشخص میکنیم
 - اگر مایل به encryption بودید کلید psk را میسازید و در هر دو سرور کپی میکنید و سپس y میزنید
-- مقدار mtu را 1000 میدهم و batch size را 16 یا 32 وارد میکنم
-- ایدی تانل هر دو طرف باید یکسان باشد. مقدار thread بین 1 تا 3( من 3 قرار دادم)
+- مقدار mtu را 900 میدهم
+- ایدی تانل هر دو طرف باید یکسان باشد
 - اگر میخواهید root پس از نصب به nobody نغییر یابد، این گزینه را فعال کنید
 - رنگ لاگ را هم فعال میکنم و verbose را غیرفعال میکنم
 - همین کار را در سرور روبرو انجام میدهم.
+- مقدار pack روی یک باشد و برای گیم poll رو 5 تا 8 ms باشد و مقدار burst عدد 4 تا 6
 
 **- نصب پیش نیاز ها**
 ```
@@ -222,13 +223,32 @@ With encryption (identical `psk.key` on both sides):
 ```bash
 # server
 sudo ./icmp_tun --mode server -c -v --id 0x1234 --burst 4 --pack 1 \
-  --pskkey psk.key \
+  --pskkey /path/psk.key \
   tun0 192.0.2.1 198.51.100.1 10.0.0.1 10.0.0.2
 
 #client
 sudo ./icmp_tun --mode client -c -v --id 0x1234 --poll-ms 8 --pack 1 \
-  --pskkey psk.key \
+  --pskkey /path/psk.key \
   tun0 198.51.100.1 192.0.2.1 10.0.0.2 10.0.0.1
+```
+# Service example 
+```
+[Unit]
+Description=ICMP Tunnel Service
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=/usr/local/bin/icmp_tun
+ExecStart=/usr/local/bin/icmp_tun/icmp_tun --mode client --id 0x4098 --poll-ms 8 --pack 1 --pskkey /usr/local/bin/icmp_tun/psk.key tun10 clientpublicip serverpublicip 10.200.0.2 10.200.0.1
+Restart=on-failure
+RestartSec=5
+
+Environment="PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+AmbientCapabilities=CAP_NET_ADMIN CAP_NET_RAW CapabilityBoundingSet=CAP_NET_ADMIN CAP_NET_RAW
+DeviceAllow=/dev/net/tun rw [Install] WantedBy=multi-user.target
+
 ```
 
 ## Gaming Recommended Profile (low-latency)
