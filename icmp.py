@@ -123,137 +123,244 @@ def generate_psk():
     input(f"{YELLOW}Press ENTER to return to menu...{RESET}")
 
 def existing_inputs():
+    """
+    Load current ExecStart from icmp_tun.service (if present) and map it into cfg["tunnel"].
+    Supports the new CLI flags:
+      --mode, --poll-ms, --burst, --pack, --mtu, --id, --pskkey, --drop-root, --daemon,
+      --color, --verbose, --rt, --cpu
+    """
     if not os.path.isfile(SERVICE_MAIN):
         return
     lines = open(SERVICE_MAIN).read().splitlines()
     exec_line = next((l for l in lines if l.startswith("ExecStart=")), None)
     if not exec_line:
         return
+
     cmd = exec_line.split("=", 1)[1].strip()
     parts = shlex.split(cmd)
-    t = cfg.setdefault("tunnel", {})
+    if not parts:
+        return
+
+    if "tunnel" not in cfg:
+        cfg["tunnel"] = {}
+    t = cfg["tunnel"]
+
     t["bindir"] = os.path.dirname(parts[0])
+
+    for k in ("mode","poll_ms","burst","pack","mtu","id","pskkey","cpu","tun","local_pub","remote_pub","local_tun","remote_tun"):
+        t.setdefault(k, "")
+    for b in ("drop_root", "daemon", "color", "verbose", "rt"):
+        t.setdefault(b, "False")
+
     idx = 1
     while idx < len(parts) and parts[idx].startswith("--"):
         flag = parts[idx]
-        if flag in ("--drop-root", "--color", "--verbose"):
+
+        if flag in ("--drop-root", "--daemon", "--color", "--verbose", "--rt"):
             key = flag[2:].replace("-", "_")
             t[key] = "True"
             idx += 1
-        else:
-            key = flag[2:].replace("-", "_")
-            if idx+1 < len(parts):
-                t[key] = parts[idx+1]
-            idx += 2
+            continue
+
+        if idx + 1 >= len(parts):
+            break
+        val = parts[idx + 1]
+        key = flag[2:].replace("-", "_")
+        t[key] = val
+        idx += 2
+
     rem = parts[idx:]
     names = ["tun", "local_pub", "remote_pub", "local_tun", "remote_tun"]
     for name, val in zip(names, rem[:5]):
         t[name] = val
+
     save_config()
 
 def edit_tunnel():
+    existing_inputs()
 
-    existing_inputs()    
-    t = cfg.setdefault("tunnel", {})
+    if "tunnel" not in cfg:
+        cfg["tunnel"] = {}
+    t = cfg["tunnel"]
+
+    t.setdefault("bindir", cfg["paths"].get("repo_dir", DEFAULT_REPO))
+    for k in ("tun","local_pub","remote_pub","local_tun","remote_tun"):
+        t.setdefault(k, "")
+
+    t.setdefault("mode", "client")
+    t.setdefault("poll_ms", "8")
+    t.setdefault("burst", "4")
+    t.setdefault("pack", "1")
+    t.setdefault("mtu", "1000")
+    t.setdefault("id", f"0x{random.randint(0,0xFFFF):04x}")
+    t.setdefault("pskkey", cfg["paths"].get("psk_path", ""))
+    t.setdefault("cpu", "")
+
+    for b in ("drop_root", "daemon", "color", "verbose", "rt"):
+        t.setdefault(b, "False")
 
     items = [
-        ("1",  "Binary directory",   "bindir"),
-        ("2",  "TUN name",           "tun"),
-        ("3",  "Local public IP",    "local_pub"),
-        ("4",  "Remote public IP",   "remote_pub"),
-        ("5",  "Local TUN IP",       "local_tun"),
-        ("6",  "Remote TUN IP",      "remote_tun"),
-        ("7",  "MTU",                "mtu"),
-        ("8",  "Batch size",         "batch"),
-        ("9",  "Tunnel ID hex",      "id"),
-        ("10", "Threads",            "threads"),
-        ("11", "Drop root",          "drop"),
-        ("12", "Color output",       "color"),
-        ("13", "Verbose",            "verbose"),
-        ("14", "Generate random ID", None),
-        ("15", "Save & Exit",        None),
+        ("1",  "Binary directory",     "bindir"),
+        ("2",  "Mode (client/server)", "mode"),
+        ("3",  "TUN name",             "tun"),
+        ("4",  "Local public IP",      "local_pub"),
+        ("5",  "Remote public IP",     "remote_pub"),
+        ("6",  "Local TUN IP",         "local_tun"),
+        ("7",  "Remote TUN IP",        "remote_tun"),
+        ("8",  "Poll ms (client)",     "poll_ms"),
+        ("9",  "Burst (server)",       "burst"),
+        ("10", "Pack",                 "pack"),
+        ("11", "MTU",                  "mtu"),
+        ("12", "Tunnel ID hex",        "id"),
+        ("13", "PSK path",             "pskkey"),
+        ("14", "Realtime (--rt)",      "rt"),
+        ("15", "CPU affinity",         "cpu"),
+        ("16", "Drop root",            "drop_root"),
+        ("17", "Daemon",               "daemon"),
+        ("18", "Color output",         "color"),
+        ("19", "Verbose",              "verbose"),
+        ("20", "Generate random ID",   None),
+        ("21", "Save & Exit",          None),
     ]
 
+    bool_keys = {"drop_root", "daemon", "color", "verbose", "rt"}
+
     while True:
-        print(f"{MAGENTA}+{'-'*40}+{RESET}")
-        print(f"{MAGENTA}|{' Edit Tunnel Parameters ':^40}|{RESET}")
-        print(f"{MAGENTA}+{'-'*40}+{RESET}")
+        print(f"{MAGENTA}+{'-'*56}+{RESET}")
+        print(f"{MAGENTA}|{' Edit ICMP Tunnel Parameters ':^56}|{RESET}")
+        print(f"{MAGENTA}+{'-'*56}+{RESET}")
 
         for num, label, key in items:
             if key:
-                val = t.get(key, "")
-                if key in ("drop","color","verbose"):
+                val = str(t.get(key, ""))
+                if key in bool_keys:
                     val = "Y" if val.lower() in ("true","1","y","yes") else "N"
-                print(f"{CYAN}| {num:>2}) {label:<18} [{WHITE}{val:^5}{RESET}{CYAN}] |{RESET}")
+                print(f"{CYAN}| {num:>2}) {label:<28} [{WHITE}{val:^14}{RESET}{CYAN}] |{RESET}")
             else:
-                print(f"{CYAN}| {num:>2}) {label:<27} |{RESET}")
+                print(f"{CYAN}| {num:>2}) {label:<47} |{RESET}")
 
-        print(f"{MAGENTA}+{'-'*40}+{RESET}")
-        choice = input(f"{YELLOW}Select [1-15]: {RESET}").strip()
+        print(f"{MAGENTA}+{'-'*56}+{RESET}")
+        choice = input(f"{YELLOW}Select [1-21]: {RESET}").strip()
 
-        if choice == "15":
+        if choice == "21":
             break
 
-        if choice == "14":
+        if choice == "20":
             new_id = f"0x{random.randint(0,0xFFFF):04x}"
             t["id"] = new_id
             print(f"{GREEN}✓ New ID: {WHITE}{new_id}{RESET}")
+            save_config()
+            continue
 
+        lookup = {n:(lbl,k) for n,lbl,k in items if k}
+        if choice not in lookup:
+            print(f"{RED}Invalid choice{RESET}")
+            continue
+
+        label, key = lookup[choice]
+        curr = str(t.get(key, ""))
+
+        if key in bool_keys:
+            ans = input(
+                f"{YELLOW}{label}? ({GREEN}y{RESET}{YELLOW}/{RED}n{RESET}{YELLOW}) "
+                f"[{WHITE}{'Y' if curr.lower() in ('true','1','y','yes') else 'N'}{RESET}{YELLOW}]: {RESET}"
+            ).strip().lower()
+            if ans == "y":
+                t[key] = "True"
+            elif ans == "n":
+                t[key] = "False"
+        elif key == "mode":
+            ans = input(f"{YELLOW}{label} {WHITE}[{curr or 'client'}]{RESET}: ").strip().lower()
+            if ans in ("client","server"):
+                t[key] = ans
+            elif ans:
+                print(f"{RED}Mode must be client or server{RESET}")
+        elif key == "cpu":
+            ans = input(f"{YELLOW}{label} {WHITE}[{curr or 'empty'}]{RESET} (e.g. 0 or 2-3): ").strip()
+            t[key] = ans  
         else:
-            lookup = {n:(lbl,k) for n,lbl,k in items if k}
-            if choice in lookup:
-                label, key = lookup[choice]
-                curr = t.get(key, "")
-                if key in ("drop","color","verbose"):
-                    ans = input(
-                        f"{YELLOW}{label}? ({GREEN}y{YELLOW}/{RED}n{YELLOW}) "
-                        f"[{WHITE}{'Y' if curr.lower() in ('true','1','y') else 'N'}{RESET}{YELLOW}]: "
-                    ).lower()
-                    if ans == "y":
-                        t[key] = "True"
-                    elif ans == "n":
-                        t[key] = "False"
-                else:
-                    ans = input(f"{YELLOW}{label} {WHITE}[{curr}]{RESET}: ").strip()
-                    if ans:
-                        t[key] = ans
-                print(f"{GREEN}✓ {label} set to {WHITE}{t[key]}{RESET}")
-            else:
-                print(f"{RED}Invalid choice{RESET}")
+            ans = input(f"{YELLOW}{label} {WHITE}[{curr}]{RESET}: ").strip()
+            if ans != "":
+                t[key] = ans
 
         save_config()
+        print(f"{GREEN}✓ Saved{RESET}")
 
     print(f"{GREEN}✓ All changes saved{RESET}")
     input(f"{YELLOW}Press ENTER to return to main menu...{RESET}")
 
 def serviceFile():
-    t   = cfg["tunnel"]
-    psk = cfg["paths"].get("psk_path","")
-    flags = []
-    for flag in ("drop","color","verbose"):
-        if t[flag].lower() in ("true","1","y","yes"):
-            flags.append(f"--{flag}")
-    flags += [
-        f"--mtu {t['mtu']}", f"--batch {t['batch']}",
-        f"--id {t['id']}", f"--threads {t['threads']}"
-    ]
-    psk_arg = f"--pskkey {psk}" if psk else ""
-    cmd = " ".join([
-        f"{t['bindir']}/icmp_tun", *flags,
-        t["tun"], t["local_pub"], t["remote_pub"],
-        t["local_tun"], t["remote_tun"], psk_arg
-    ]).strip()
-    with open(SERVICE_MAIN,"w") as f:
-        f.write(f"""\
-[Unit]
+    if "tunnel" not in cfg:
+        cfg["tunnel"] = {}
+    t = cfg["tunnel"]
+
+    bindir = (t.get("bindir") or cfg["paths"].get("repo_dir") or DEFAULT_REPO).strip()
+    binpath = os.path.join(bindir, "icmp_tun")
+
+    tun        = (t.get("tun") or "").strip()
+    local_pub  = (t.get("local_pub") or "").strip()
+    remote_pub = (t.get("remote_pub") or "").strip()
+    local_tun  = (t.get("local_tun") or "").strip()
+    remote_tun = (t.get("remote_tun") or "").strip()
+
+    mode = (t.get("mode") or "client").strip().lower()
+    if mode not in ("client", "server"):
+        mode = "client"
+
+    flags = ["--mode", mode]
+
+    poll_ms = (t.get("poll_ms") or "").strip()
+    if mode == "client" and poll_ms:
+        flags += ["--poll-ms", poll_ms]
+
+    burst = (t.get("burst") or "").strip()
+    if mode == "server" and burst:
+        flags += ["--burst", burst]
+
+    pack = (t.get("pack") or "").strip()
+    if pack:
+        flags += ["--pack", pack]
+
+    mtu = (t.get("mtu") or "").strip()
+    if mtu:
+        flags += ["--mtu", mtu]
+
+    tid = (t.get("id") or "").strip()
+    if tid:
+        flags += ["--id", tid]
+
+    psk = (t.get("pskkey") or cfg["paths"].get("psk_path","") or "").strip()
+    if psk:
+        flags += ["--pskkey", psk]
+
+    cpu = (t.get("cpu") or "").strip()
+    if cpu:
+        flags += ["--cpu", cpu]
+
+    for bf in ("drop_root", "daemon", "color", "verbose", "rt"):
+        if str(t.get(bf, "False")).lower() in ("true","1","y","yes"):
+            flags.append("--" + bf.replace("_", "-"))
+
+    cmd_parts = [binpath] + flags + [tun, local_pub, remote_pub, local_tun, remote_tun]
+    cmd = " ".join(shlex.quote(x) for x in cmd_parts if x != "")
+
+    with open(SERVICE_MAIN, "w") as f:
+        f.write(f"""[Unit]
 Description=ICMP Tunnel Service
-After=network.target
+Wants=network-online.target
+After=network-online.target
 
 [Service]
 Type=simple
+WorkingDirectory={bindir}
 ExecStart={cmd}
 Restart=on-failure
 RestartSec=5
+
+Environment="PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+AmbientCapabilities=CAP_NET_ADMIN CAP_NET_RAW
+CapabilityBoundingSet=CAP_NET_ADMIN CAP_NET_RAW
+DeviceAllow=/dev/net/tun rw
 
 [Install]
 WantedBy=multi-user.target
@@ -264,71 +371,88 @@ def tunnelCreate():
     print("\033[92m ^ ^\033[0m")
     print("\033[92m(\033[91mO,O\033[92m)\033[0m")
     print("\033[92m(   ) \033[93mCreate tunnel \033[93mMenu\033[0m")
-    print(
-        '\033[92m "-"\033[93m═══════════════════════════════════════════════════\033[0m'
-    )
+    print('\033[92m "-"\033[93m═══════════════════════════════════════════════════\033[0m')
 
+    bindir_default = cfg["paths"].get("repo_dir", DEFAULT_REPO)
     bindir = input(
-        f"{YELLOW}Installation directory (binary) {WHITE}[{cfg['paths']['repo_dir']}]{RESET}: "
-    ).strip() or cfg['paths']['repo_dir']
+        f"{YELLOW}Installation directory (binary) {WHITE}[{bindir_default}]{RESET}: "
+    ).strip() or bindir_default
 
-    tun = input(f"{YELLOW}TUN interface name {GREEN}(e.g. icmptun){RESET}: ").strip()
+    mode = input(f"{YELLOW}Mode {WHITE}[client/server]{RESET} {WHITE}[client]{RESET}: ").strip().lower() or "client"
+    if mode not in ("client", "server"):
+        print(f"{RED}Invalid mode. Must be client or server.{RESET}")
+        input(f"{YELLOW}Press ENTER to return to the main menu...{RESET}")
+        return
 
-    local_pub = input(f"{YELLOW}Local public IP {GREEN}(e.g. 192.0.2.1){RESET}: ").strip()
-    remote_pub = input(f"{YELLOW}Remote public IP {GREEN}(e.g. 198.51.100.1){RESET}: ").strip()
+    tun = input(f"{YELLOW}TUN interface name {GREEN}(e.g. tun10){RESET}: ").strip()
 
-    local_tun = input(f"{YELLOW}Local TUN IP {GREEN}(e.g. 172.0.0.1){RESET}: ").strip()
-    remote_tun = input(f"{YELLOW}Remote TUN IP {GREEN}(e.g. 172.0.0.2){RESET}: ").strip()
+    if mode == "server":
+        local_pub  = input(f"{YELLOW}Server public IP {GREEN}(this machine){RESET}: ").strip()
+        remote_pub = input(f"{YELLOW}Client public IP {GREEN}(peer){RESET}: ").strip()
+        local_tun  = input(f"{YELLOW}Server TUN IP {GREEN}(e.g. 10.0.0.1){RESET}: ").strip()
+        remote_tun = input(f"{YELLOW}Client TUN IP {GREEN}(e.g. 10.0.0.2){RESET}: ").strip()
+    else:
+        local_pub  = input(f"{YELLOW}Client public IP {GREEN}(this machine){RESET}: ").strip()
+        remote_pub = input(f"{YELLOW}Server public IP {GREEN}(peer){RESET}: ").strip()
+        local_tun  = input(f"{YELLOW}Client TUN IP {GREEN}(e.g. 10.0.0.2){RESET}: ").strip()
+        remote_tun = input(f"{YELLOW}Server TUN IP {GREEN}(e.g. 10.0.0.1){RESET}: ").strip()
 
-    use_key = input(f"{YELLOW}Use PSK?{RESET} ({GREEN}y{RESET}/{RED}n{RESET}): ").lower() == 'y'
-    psk_arg = ""
-    if use_key:
-        default_psk = cfg['paths'].get('psk_path', '')
-        psk = input(
-            f"{YELLOW}Path to PSK file {WHITE}[{default_psk}]{RESET}: "
-        ).strip() or default_psk
-        psk_arg = f"--pskkey {psk}"
+    poll_ms = ""
+    burst = ""
+    if mode == "client":
+        poll_ms = input(f"{YELLOW}Poll interval (ms) {WHITE}[8]{RESET}: ").strip() or "8"
+    else:
+        burst = input(f"{YELLOW}Burst replies per poll {WHITE}[4]{RESET}: ").strip() or "4"
 
-    mtu = input(f"{YELLOW}MTU {WHITE}[1000]{RESET}: ").strip() or "1000"
-    batch = input(f"{YELLOW}Batch size {WHITE}[16]{RESET}: ").strip() or "16"
+    pack = input(f"{YELLOW}Pack {WHITE}[1]{RESET}: ").strip() or "1"
+    mtu  = input(f"{YELLOW}MTU {WHITE}[1000]{RESET}: ").strip() or "1000"
 
     gen_id = f"0x{random.randint(0, 0xFFFF):04x}"
     tid = input(f"{YELLOW}Tunnel ID hex {WHITE}[{gen_id}]{RESET}: ").strip() or gen_id
 
-    threads = input(f"{YELLOW}Threads {WHITE}[1]{RESET}: ").strip() or "1"
+    use_key = input(f"{YELLOW}Use PSK?{RESET} ({GREEN}y{RESET}/{RED}n{RESET}): ").strip().lower() == "y"
+    psk = ""
+    if use_key:
+        default_psk = cfg["paths"].get("psk_path", "")
+        psk = input(f"{YELLOW}Path to PSK file {WHITE}[{default_psk}]{RESET}: ").strip() or default_psk
 
-    drop = input(f"{YELLOW}Drop root after setup?{RESET} ({GREEN}y{RESET}/{RED}n{RESET}): ").lower() == 'y'
-    color = input(f"{YELLOW}Enable color output?{RESET} ({GREEN}Y{RESET}/{RED}n{RESET}): ").lower() != 'n'
-    verbose = input(f"{YELLOW}Enable verbose?{RESET} ({GREEN}y{RESET}/{RED}N{RESET}): ").lower() == 'y'
+    drop_root = input(f"{YELLOW}Drop root after setup?{RESET} ({GREEN}y{RESET}/{RED}n{RESET}): ").strip().lower() == "y"
+    daemon    = input(f"{YELLOW}Run in daemon mode?{RESET} ({GREEN}y{RESET}/{RED}n{RESET}): ").strip().lower() == "y"
+    rt        = input(f"{YELLOW}Realtime scheduling (--rt)?{RESET} ({GREEN}y{RESET}/{RED}n{RESET}): ").strip().lower() == "y"
+    cpu       = input(f"{YELLOW}CPU affinity (--cpu) {WHITE}[empty]{RESET} (e.g. 0 or 2-3): ").strip()
 
-    flags = []
-    if drop:    flags.append("--drop-root")
-    if color:   flags.append("--color")
-    if verbose: flags.append("--verbose")
-    flags += [f"--mtu {mtu}", f"--batch {batch}", f"--id {tid}", f"--threads {threads}"]
+    color_in = input(f"{YELLOW}Enable color output?{RESET} ({GREEN}y{RESET}/{RED}n{RESET}) {WHITE}[y]{RESET}: ").strip().lower()
+    if color_in == "":
+        color_in = "y"
+    color = (color_in == "y")
 
-    cmd = " ".join([
-        f"{bindir}/icmp_tun",
-        *flags,
-        tun, local_pub, remote_pub, local_tun, remote_tun, psk_arg
-    ]).strip()
+    verbose = input(f"{YELLOW}Enable verbose?{RESET} ({GREEN}y{RESET}/{RED}n{RESET}) {WHITE}[n]{RESET}: ").strip().lower() == "y"
 
-    with open(SERVICE_MAIN, "w") as f:
-        f.write(f"""\
-[Unit]
-Description=ICMP Tunnel Service
-After=network.target
+    if "tunnel" not in cfg:
+        cfg["tunnel"] = {}
+    t = cfg["tunnel"]
+    t["bindir"] = os.path.abspath(bindir)
+    t["mode"] = mode
+    t["tun"] = tun
+    t["local_pub"] = local_pub
+    t["remote_pub"] = remote_pub
+    t["local_tun"] = local_tun
+    t["remote_tun"] = remote_tun
+    t["poll_ms"] = poll_ms
+    t["burst"] = burst
+    t["pack"] = pack
+    t["mtu"] = mtu
+    t["id"] = tid
+    t["pskkey"] = psk
+    t["drop_root"] = "True" if drop_root else "False"
+    t["daemon"] = "True" if daemon else "False"
+    t["rt"] = "True" if rt else "False"
+    t["cpu"] = cpu
+    t["color"] = "True" if color else "False"
+    t["verbose"] = "True" if verbose else "False"
+    save_config()
 
-[Service]
-Type=simple
-ExecStart={cmd}
-Restart=on-failure
-RestartSec=5
-
-[Install]
-WantedBy=multi-user.target
-""")
-
+    serviceFile()
     run("systemctl daemon-reload")
     run("systemctl enable --now icmp_tun.service")
 
@@ -336,7 +460,6 @@ WantedBy=multi-user.target
     notify("ICMP Tunnel", "Service configured and started")
     print(f"{YELLOW}" + "―" * 50 + f"{RESET}")
     input(f"{YELLOW}Press ENTER to return to the main menu...{RESET}")
-
 
 def resetTimer():
     iv = input(f"{YELLOW}Reset interval (number){WHITE}[e.g. 30]{RESET}: ").strip()
