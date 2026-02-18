@@ -1,5 +1,10 @@
 #!/usr/bin/env python3
-#Author: https://github.com/Azumi67
+# Author: https://github.com/Azumi67
+#
+# Update (Feb 2026):
+# - FIX: systemd + --drop-root caused: "[ERROR] Failed to drop privileges"
+
+
 import os
 import sys
 import subprocess
@@ -9,6 +14,8 @@ import shutil
 import readline
 import io
 import shlex
+from pathlib import Path
+import ipaddress
 
 sys.stdout = io.TextIOWrapper(sys.stdout.detach(), encoding="utf-8", errors="replace")
 
@@ -19,8 +26,8 @@ def logo():
         subprocess.run(["bash", "-c", logo_path], check=True)
     except subprocess.CalledProcessError as e:
         return e
-
     return None
+
 
 RESET     = "\033[0m"
 WHITE     = "\033[97m"
@@ -38,10 +45,16 @@ SCRIPT_RESET  = "/usr/local/bin/icmp_tun_reset.sh"
 CONFIG_FILE   = "/etc/icmp_tun.conf"
 GIT_REPO      = "https://github.com/Azumi67/icmp_tun.git"
 DEFAULT_REPO  = "/usr/local/bin/icmp_tun"
+DROP_USER   = "icmptun"
+DROP_GROUP  = "icmptun"
+ETC_KEY_DIR = "/etc/icmp_tun"
+ETC_KEY     = "/etc/icmp_tun/psk.key"
+
 
 def notify(title, message):
     if shutil.which("notify-send"):
         subprocess.call(["notify-send", title, message])
+
 
 def run(cmd, exit_on_fail=True):
     print(f"{CYAN}$ {cmd}{RESET}")
@@ -50,23 +63,79 @@ def run(cmd, exit_on_fail=True):
         print(f"{RED}Error: command failed:{RESET} {cmd}")
         sys.exit(1)
 
+
 def root():
     if os.geteuid() != 0:
         print(f"{RED}Error: this script must be run as root!{RESET}")
         sys.exit(1)
 
+
+def _system_user():
+    subprocess.call(
+        f"getent group {shlex.quote(DROP_GROUP)} >/dev/null 2>&1 || groupadd --system {shlex.quote(DROP_GROUP)}",
+        shell=True
+    )
+    subprocess.call(
+        f"id -u {shlex.quote(DROP_USER)} >/dev/null 2>&1 || "
+        f"useradd --system --no-create-home --shell /usr/sbin/nologin -g {shlex.quote(DROP_GROUP)} {shlex.quote(DROP_USER)}",
+        shell=True
+    )
+
+
+def _psk_drop(psk_path: str) -> str:
+
+    if not psk_path:
+        return ""
+    src = Path(psk_path)
+    if not src.exists():
+        print(f"{RED}PSK not found: {psk_path}{RESET}")
+        return ""
+    run(f"install -d -m 0755 {shlex.quote(ETC_KEY_DIR)}")
+    run(f"install -m 0640 -o root -g {shlex.quote(DROP_GROUP)} {shlex.quote(str(src))} {shlex.quote(ETC_KEY)}")
+    return ETC_KEY
+
+
+def _valid_ipv4(x: str) -> bool:
+    try:
+        ipaddress.IPv4Address(x.strip())
+        return True
+    except Exception:
+        return False
+
+
+def must_ipv4(prompt: str, example: str = "") -> str:
+    while True:
+        s = input(prompt).strip()
+        if not s:
+            print(f"{RED}Value required.{RESET}")
+            continue
+        if _valid_ipv4(s):
+            return s
+        ex = f" Example: {example}" if example else ""
+        print(f"{RED}Invalid IPv4 address.{RESET}{ex}")
+
+
+def must_text(prompt: str) -> str:
+    while True:
+        s = input(prompt).strip()
+        if s:
+            return s
+        print(f"{RED}Value required.{RESET}")
+
+
 cfg = configparser.ConfigParser()
-default_repo = "/usr/local/bin/icmp_tun"
 if os.path.exists(CONFIG_FILE):
     cfg.read(CONFIG_FILE)
 if "paths" not in cfg:
-    cfg["paths"] = {"repo_dir": default_repo}
+    cfg["paths"] = {"repo_dir": DEFAULT_REPO}
     with open(CONFIG_FILE, "w") as f:
         cfg.write(f)
+
 
 def save_config():
     with open(CONFIG_FILE, "w") as f:
         cfg.write(f)
+
 
 def build_repo():
     repo = cfg["paths"]["repo_dir"]
@@ -75,7 +144,8 @@ def build_repo():
         print(f"{RED}Source not found: {src}{RESET}")
         return
     out = os.path.join(repo, "icmp_tun")
-    run(f"g++ -O2 -std=c++17 {src} -o {out} -lsodium -pthread")
+    run(f"g++ -O2 -std=c++17 {shlex.quote(src)} -o {shlex.quote(out)} -lsodium -pthread")
+
 
 def install_n_build():
     run("apt update && apt install -y g++ build-essential libsodium-dev iproute2 git systemd sshpass")
@@ -85,53 +155,58 @@ def install_n_build():
     cfg["paths"]["repo_dir"] = abs_dest
     save_config()
     if not os.path.isdir(abs_dest):
-        run(f"git clone {GIT_REPO} {abs_dest}")
+        run(f"git clone {shlex.quote(GIT_REPO)} {shlex.quote(abs_dest)}")
     build_repo()
     input(f"{YELLOW}Press ENTER to return to main menu...{RESET}")
+
 
 def generate_psk():
     os.system("clear")
     print("\033[92m ^ ^\033[0m")
     print("\033[92m(\033[91mO,O\033[92m)\033[0m")
     print("\033[92m(   ) \033[93mGenerate PSK \033[93mMenu\033[0m")
-    print(
-        '\033[92m "-"\033[93m═══════════════════════════════════════════════════\033[0m'
-    )
+    print('\033[92m "-"\033[93m═══════════════════════════════════════════════════\033[0m')
+
     repo = cfg["paths"]["repo_dir"]
     if not os.path.isdir(repo):
         print(f"{RED}Repo missing; run option 1 first{RESET}")
         input(f"{YELLOW}Press ENTER to return to menu...{RESET}")
         return
+
     default_key = "psk.key"
-    keyfile = input(f"{YELLOW}PSK filename inside {WHITE}{repo}{RESET} {WHITE}[{default_key}]{RESET}: ").strip() or default_key
+    keyfile = input(
+        f"{YELLOW}PSK filename inside {WHITE}{repo}{RESET} {WHITE}[{default_key}]{RESET}: "
+    ).strip() or default_key
+
     local = os.path.join(repo, keyfile)
-    run(f"head -c 32 /dev/urandom > {local}")
-    run(f"chmod 600 {local}")
+    run(f"head -c 32 /dev/urandom > {shlex.quote(local)}")
+    run(f"chmod 600 {shlex.quote(local)}")
     cfg["paths"]["psk_path"] = local
     save_config()
     print(f"{GREEN}✓ PSK generated at {local}{RESET}")
     notify("ICMP Tunnel", f"PSK written to {local}")
-    if input(f"{YELLOW}SCP to remote?{RESET} ({GREEN}y{RESET}/{RED}n{RESET}): ").lower()=="y":
+
+    if input(f"{YELLOW}SCP to remote?{RESET} ({GREEN}y{RESET}/{RED}n{RESET}): ").lower() == "y":
         user = input(f"{GREEN}Remote user:{RESET} ").strip()
         ip   = input(f"{GREEN}Remote IP:{RESET} ").strip()
         port = input(f"{YELLOW}SSH port{WHITE}[22]{RESET}: ").strip() or "22"
         remote_repo = input(f"{YELLOW}Remote repo dir{WHITE}[{repo}]{RESET}: ").strip() or repo
         pw = input(f"{GREEN}Remote password:{RESET} ")
-        run(f"sshpass -p '{pw}' scp -o StrictHostKeyChecking=no -P {port} {local} {user}@{ip}:{remote_repo}/{keyfile}")
+        run(
+            f"sshpass -p {shlex.quote(pw)} scp -o StrictHostKeyChecking=no -P {shlex.quote(port)} "
+            f"{shlex.quote(local)} {shlex.quote(user)}@{shlex.quote(ip)}:{shlex.quote(remote_repo)}/{shlex.quote(keyfile)}"
+        )
         print(f"{GREEN}✓ PSK copied to {ip}{RESET}")
         notify("ICMP Tunnel", f"PSK SCP to {ip} succeeded")
+
     input(f"{YELLOW}Press ENTER to return to menu...{RESET}")
 
+
 def existing_inputs():
-    """
-    Load current ExecStart from icmp_tun.service (if present) and map it into cfg["tunnel"].
-    Supports the new CLI flags:
-      --mode, --poll-ms, --burst, --pack, --mtu, --id, --pskkey, --drop-root, --daemon,
-      --color, --verbose, --rt, --cpu
-    """
+
     if not os.path.isfile(SERVICE_MAIN):
         return
-    lines = open(SERVICE_MAIN).read().splitlines()
+    lines = open(SERVICE_MAIN, "r", encoding="utf-8", errors="replace").read().splitlines()
     exec_line = next((l for l in lines if l.startswith("ExecStart=")), None)
     if not exec_line:
         return
@@ -156,9 +231,13 @@ def existing_inputs():
     while idx < len(parts) and parts[idx].startswith("--"):
         flag = parts[idx]
 
-        if flag in ("--drop-root", "--daemon", "--color", "--verbose", "--rt"):
+        if flag in ("--daemon", "--color", "--verbose", "--rt"):
             key = flag[2:].replace("-", "_")
             t[key] = "True"
+            idx += 1
+            continue
+
+        if flag == "--drop-root":
             idx += 1
             continue
 
@@ -175,6 +254,7 @@ def existing_inputs():
         t[name] = val
 
     save_config()
+
 
 def edit_tunnel():
     existing_inputs()
@@ -200,27 +280,27 @@ def edit_tunnel():
         t.setdefault(b, "False")
 
     items = [
-        ("1",  "Binary directory",     "bindir"),
-        ("2",  "Mode (client/server)", "mode"),
-        ("3",  "TUN name",             "tun"),
-        ("4",  "Local public IP",      "local_pub"),
-        ("5",  "Remote public IP",     "remote_pub"),
-        ("6",  "Local TUN IP",         "local_tun"),
-        ("7",  "Remote TUN IP",        "remote_tun"),
-        ("8",  "Poll ms (client)",     "poll_ms"),
-        ("9",  "Burst (server)",       "burst"),
-        ("10", "Pack",                 "pack"),
-        ("11", "MTU",                  "mtu"),
-        ("12", "Tunnel ID hex",        "id"),
-        ("13", "PSK path",             "pskkey"),
-        ("14", "Realtime (--rt)",      "rt"),
-        ("15", "CPU affinity",         "cpu"),
-        ("16", "Drop root",            "drop_root"),
-        ("17", "Daemon",               "daemon"),
-        ("18", "Color output",         "color"),
-        ("19", "Verbose",              "verbose"),
-        ("20", "Generate random ID",   None),
-        ("21", "Save & Exit",          None),
+        ("1",  "Binary directory",        "bindir"),
+        ("2",  "Mode (client/server)",    "mode"),
+        ("3",  "TUN name",                "tun"),
+        ("4",  "Local public IP",         "local_pub"),
+        ("5",  "Remote public IP",        "remote_pub"),
+        ("6",  "Local TUN IP",            "local_tun"),
+        ("7",  "Remote TUN IP",           "remote_tun"),
+        ("8",  "Poll ms (client)",        "poll_ms"),
+        ("9",  "Burst (server)",          "burst"),
+        ("10", "Pack",                    "pack"),
+        ("11", "MTU",                     "mtu"),
+        ("12", "Tunnel ID hex",           "id"),
+        ("13", "PSK path",                "pskkey"),
+        ("14", "Realtime (--rt)",         "rt"),
+        ("15", "CPU affinity",            "cpu"),
+        ("16", "Drop root (systemd)",     "drop_root"),
+        ("17", "Daemon",                  "daemon"),
+        ("18", "Color output",            "color"),
+        ("19", "Verbose",                 "verbose"),
+        ("20", "Generate random ID",      None),
+        ("21", "Save & Exit",             None),
     ]
 
     bool_keys = {"drop_root", "daemon", "color", "verbose", "rt"}
@@ -277,7 +357,7 @@ def edit_tunnel():
                 print(f"{RED}Mode must be client or server{RESET}")
         elif key == "cpu":
             ans = input(f"{YELLOW}{label} {WHITE}[{curr or 'empty'}]{RESET} (e.g. 0 or 2-3): ").strip()
-            t[key] = ans  
+            t[key] = ans
         else:
             ans = input(f"{YELLOW}{label} {WHITE}[{curr}]{RESET}: ").strip()
             if ans != "":
@@ -288,6 +368,7 @@ def edit_tunnel():
 
     print(f"{GREEN}✓ All changes saved{RESET}")
     input(f"{YELLOW}Press ENTER to return to main menu...{RESET}")
+
 
 def serviceFile():
     if "tunnel" not in cfg:
@@ -306,6 +387,8 @@ def serviceFile():
     mode = (t.get("mode") or "client").strip().lower()
     if mode not in ("client", "server"):
         mode = "client"
+
+    drop_root = str(t.get("drop_root", "False")).lower() in ("true","1","y","yes")
 
     flags = ["--mode", mode]
 
@@ -330,6 +413,9 @@ def serviceFile():
         flags += ["--id", tid]
 
     psk = (t.get("pskkey") or cfg["paths"].get("psk_path","") or "").strip()
+    if psk and drop_root:
+        _system_user()
+        psk = _psk_drop(psk)
     if psk:
         flags += ["--pskkey", psk]
 
@@ -337,25 +423,30 @@ def serviceFile():
     if cpu:
         flags += ["--cpu", cpu]
 
-    for bf in ("drop_root", "daemon", "color", "verbose", "rt"):
+    for bf in ("daemon", "color", "verbose", "rt"):
         if str(t.get(bf, "False")).lower() in ("true","1","y","yes"):
             flags.append("--" + bf.replace("_", "-"))
 
     cmd_parts = [binpath] + flags + [tun, local_pub, remote_pub, local_tun, remote_tun]
     cmd = " ".join(shlex.quote(x) for x in cmd_parts if x != "")
 
-    with open(SERVICE_MAIN, "w") as f:
-        f.write(f"""[Unit]
+    user_lines = ""
+    if drop_root:
+        user_lines = f"User={DROP_USER}\nGroup={DROP_GROUP}\nNoNewPrivileges=true\n"
+
+    with open(SERVICE_MAIN, "w", encoding="utf-8") as f:
+    f.write(f"""[Unit]
 Description=ICMP Tunnel Service
 Wants=network-online.target
 After=network-online.target
+StartLimitIntervalSec=0
 
 [Service]
 Type=simple
 WorkingDirectory={bindir}
-ExecStart={cmd}
+{user_lines}ExecStart={cmd}
 Restart=on-failure
-RestartSec=5
+RestartSec=2
 
 Environment="PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
 AmbientCapabilities=CAP_NET_ADMIN CAP_NET_RAW
@@ -365,6 +456,7 @@ DeviceAllow=/dev/net/tun rw
 [Install]
 WantedBy=multi-user.target
 """)
+
 
 def tunnelCreate():
     os.system("clear")
@@ -384,18 +476,18 @@ def tunnelCreate():
         input(f"{YELLOW}Press ENTER to return to the main menu...{RESET}")
         return
 
-    tun = input(f"{YELLOW}TUN interface name {GREEN}(e.g. tun10){RESET}: ").strip()
+    tun = must_text(f"{YELLOW}TUN interface name {GREEN}(e.g. tun10){RESET}: ")
 
     if mode == "server":
-        local_pub  = input(f"{YELLOW}Server public IP {GREEN}(this machine){RESET}: ").strip()
-        remote_pub = input(f"{YELLOW}Client public IP {GREEN}(peer){RESET}: ").strip()
-        local_tun  = input(f"{YELLOW}Server TUN IP {GREEN}(e.g. 10.0.0.1){RESET}: ").strip()
-        remote_tun = input(f"{YELLOW}Client TUN IP {GREEN}(e.g. 10.0.0.2){RESET}: ").strip()
+        local_pub  = must_ipv4(f"{YELLOW}Server public IP {GREEN}(this machine){RESET}: ", "82.24.195.122")
+        remote_pub = must_ipv4(f"{YELLOW}Client public IP {GREEN}(peer){RESET}: ", "185.110.244.249")
+        local_tun  = must_ipv4(f"{YELLOW}Server TUN IP {GREEN}(e.g. 10.200.0.1){RESET}: ", "10.200.0.1")
+        remote_tun = must_ipv4(f"{YELLOW}Client TUN IP {GREEN}(e.g. 10.200.0.2){RESET}: ", "10.200.0.2")
     else:
-        local_pub  = input(f"{YELLOW}Client public IP {GREEN}(this machine){RESET}: ").strip()
-        remote_pub = input(f"{YELLOW}Server public IP {GREEN}(peer){RESET}: ").strip()
-        local_tun  = input(f"{YELLOW}Client TUN IP {GREEN}(e.g. 10.0.0.2){RESET}: ").strip()
-        remote_tun = input(f"{YELLOW}Server TUN IP {GREEN}(e.g. 10.0.0.1){RESET}: ").strip()
+        local_pub  = must_ipv4(f"{YELLOW}Client public IP {GREEN}(this machine){RESET}: ", "185.110.244.249")
+        remote_pub = must_ipv4(f"{YELLOW}Server public IP {GREEN}(peer){RESET}: ", "82.24.195.122")
+        local_tun  = must_ipv4(f"{YELLOW}Client TUN IP {GREEN}(e.g. 10.200.0.2){RESET}: ", "10.200.0.2")
+        remote_tun = must_ipv4(f"{YELLOW}Server TUN IP {GREEN}(e.g. 10.200.0.1){RESET}: ", "10.200.0.1")
 
     poll_ms = ""
     burst = ""
@@ -416,9 +508,16 @@ def tunnelCreate():
         default_psk = cfg["paths"].get("psk_path", "")
         psk = input(f"{YELLOW}Path to PSK file {WHITE}[{default_psk}]{RESET}: ").strip() or default_psk
 
-    drop_root = input(f"{YELLOW}Drop root after setup?{RESET} ({GREEN}y{RESET}/{RED}n{RESET}): ").strip().lower() == "y"
-    daemon    = input(f"{YELLOW}Run in daemon mode?{RESET} ({GREEN}y{RESET}/{RED}n{RESET}): ").strip().lower() == "y"
-    rt        = input(f"{YELLOW}Realtime scheduling (--rt)?{RESET} ({GREEN}y{RESET}/{RED}n{RESET}): ").strip().lower() == "y"
+    drop_root = input(
+        f"{YELLOW}Run service as unprivileged user via systemd?{RESET} "
+        f"({GREEN}y{RESET}/{RED}n{RESET}) {WHITE}[y]{RESET}: "
+    ).strip().lower()
+    if drop_root == "":
+        drop_root = "y"
+    drop_root = (drop_root == "y")
+
+    daemon    = input(f"{YELLOW}Run in daemon mode?{RESET} ({GREEN}y{RESET}/{RED}n{RESET}) {WHITE}[n]{RESET}: ").strip().lower() == "y"
+    rt        = input(f"{YELLOW}Realtime scheduling (--rt)?{RESET} ({GREEN}y{RESET}/{RED}n{RESET}) {WHITE}[n]{RESET}: ").strip().lower() == "y"
     cpu       = input(f"{YELLOW}CPU affinity (--cpu) {WHITE}[empty]{RESET} (e.g. 0 or 2-3): ").strip()
 
     color_in = input(f"{YELLOW}Enable color output?{RESET} ({GREEN}y{RESET}/{RED}n{RESET}) {WHITE}[y]{RESET}: ").strip().lower()
@@ -459,20 +558,25 @@ def tunnelCreate():
     print(f"{GREEN}✓ Tunnel service configured and running{RESET}")
     notify("ICMP Tunnel", "Service configured and started")
     print(f"{YELLOW}" + "―" * 50 + f"{RESET}")
+    if drop_root:
+        print(f"{CYAN}Info:{RESET} Service runs as {WHITE}{DROP_USER}{RESET} with caps (NET_ADMIN, NET_RAW).")
+        if psk:
+            print(f"{CYAN}Info:{RESET} PSK copied to {WHITE}{ETC_KEY}{RESET} (root:{DROP_GROUP} 0640).")
     input(f"{YELLOW}Press ENTER to return to the main menu...{RESET}")
+
 
 def resetTimer():
     iv = input(f"{YELLOW}Reset interval (number){WHITE}[e.g. 30]{RESET}: ").strip()
     iu = input(f"{YELLOW}Unit - minutes(m) or hours(h){WHITE}[m/h]{RESET}: ").strip().lower()
-    with open(SCRIPT_RESET,"w") as f:
+    with open(SCRIPT_RESET, "w", encoding="utf-8") as f:
         f.write(f"""#!/bin/bash
 while true; do
   sleep {iv}{iu}
   systemctl restart icmp_tun.service
 done
 """)
-    os.chmod(SCRIPT_RESET,0o755)
-    with open(SERVICE_RESET,"w") as f:
+    os.chmod(SCRIPT_RESET, 0o755)
+    with open(SERVICE_RESET, "w", encoding="utf-8") as f:
         f.write(f"""\
 [Unit]
 Description=ICMP Tunnel Auto-Reset
@@ -490,6 +594,7 @@ WantedBy=multi-user.target
     print(f"{GREEN}Reset timer configured.{RESET}")
     input(f"{YELLOW}Press ENTER to return to main menu...{RESET}")
 
+
 def statusnlogs():
     print("\033[93m───────────────────────────────────────\033[0m")
     print(f"{CYAN}=== Service Status ==={RESET}")
@@ -499,32 +604,45 @@ def statusnlogs():
     print("\033[93m───────────────────────────────────────\033[0m")
     input(f"{YELLOW}Press ENTER to return to main menu...{RESET}")
 
+
 def uninstall_tun():
     print("\033[93m───────────────────────────────────────\033[0m")
     print(f"{YELLOW}Uninstalling ICMP Tunnel...{RESET}")
     print("\033[93m───────────────────────────────────────\033[0m")
+
     def safe(cmd):
         print(f"{CYAN}$ {cmd}{RESET}")
         subprocess.call(cmd, shell=True)
+
     safe("systemctl stop icmp_tun_reset.service")
     safe("systemctl stop icmp_tun.service")
     safe("systemctl disable icmp_tun_reset.service")
     safe("systemctl disable icmp_tun.service")
+
     for path in (SERVICE_MAIN, SERVICE_RESET):
         if os.path.exists(path):
             os.remove(path)
             print(f"{GREEN}✓ Removed {path}{RESET}")
+
     for path in (SCRIPT_RESET, CONFIG_FILE):
         if os.path.exists(path):
             os.remove(path)
             print(f"{GREEN}✓ Removed {path}{RESET}")
+
     safe("systemctl daemon-reload")
+
+    if os.path.isdir(ETC_KEY_DIR) and input(f"{BLUE}Delete {ETC_KEY_DIR}? ({GREEN}y{BLUE}/{RED}n{BLUE}): {RESET}").lower() == "y":
+        shutil.rmtree(ETC_KEY_DIR)
+        print(f"{GREEN}✓ Deleted {ETC_KEY_DIR}{RESET}")
+
     repo = cfg["paths"]["repo_dir"]
-    if os.path.isdir(repo) and input(f"{BLUE}Delete project dir {repo}? ({RED}y{BLUE}/{GREEN}n{BLUE}): {RESET}").lower()=="y":
+    if os.path.isdir(repo) and input(f"{BLUE}Delete project dir {repo}? ({GREEN}y{BLUE}/{RED}n{BLUE}): {RESET}").lower() == "y":
         shutil.rmtree(repo)
         print(f"{GREEN}✓ Deleted project dir{RESET}")
+
     notify("ICMP Tunnel", "Uninstallation complete")
     input(f"{YELLOW}Press ENTER to return to menu...{RESET}")
+
 
 def main():
     root()
@@ -533,9 +651,8 @@ def main():
     print("\033[92m ^ ^\033[0m")
     print("\033[92m(\033[91mO,O\033[92m)\033[0m")
     print("\033[92m(   ) \033[93mICMP Tunnel Setup Menu\033[0m")
-    print(
-        '\033[92m "-"\033[93m═══════════════════════════════════════════════════\033[0m'
-    )
+    print('\033[92m "-"\033[93m═══════════════════════════════════════════════════\033[0m')
+
     while True:
         print("\033[93m╭───────────────────────────────────────╮\033[0m")
         print("1.\033[97m Install & Build Repo\033[0m")
@@ -549,14 +666,25 @@ def main():
         print("\033[93m───────────────────────────────────────\033[0m")
 
         choice = input(f"{GREEN}Choose [1-7, q]: {RESET}").strip()
-        if   choice == "1": install_n_build()
-        elif choice == "2": generate_psk()
-        elif choice == "3": tunnelCreate()
-        elif choice == "4": edit_tunnel()
-        elif choice == "5": resetTimer()
-        elif choice == "6": statusnlogs()
-        elif choice == "7": uninstall_tun()
-        elif choice == "q": sys.exit(0)
-        else: print(f"{RED}Invalid choice.{RESET}")
+        if choice == "1":
+            install_n_build()
+        elif choice == "2":
+            generate_psk()
+        elif choice == "3":
+            tunnelCreate()
+        elif choice == "4":
+            edit_tunnel()
+        elif choice == "5":
+            resetTimer()
+        elif choice == "6":
+            statusnlogs()
+        elif choice == "7":
+            uninstall_tun()
+        elif choice == "q":
+            sys.exit(0)
+        else:
+            print(f"{RED}Invalid choice.{RESET}")
 
-main()
+
+if __name__ == "__main__":
+    main()
